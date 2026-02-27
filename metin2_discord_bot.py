@@ -58,8 +58,8 @@ def fetch_threads():
         # ignoră sticky threads
         if "isSticky" in item.get("class", []):
             continue
-        # preia link-ul real: orice <a> din thread care conține /thread/
-        link = item.find("a", href=lambda href: href and "/thread/" in href)
+        # selector actual pentru Item Shop RO
+        link = item.select_one("h3.structItem-title a")
         if not link:
             continue
         href = link.get("href")
