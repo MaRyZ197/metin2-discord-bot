@@ -32,6 +32,7 @@ retry = Retry(
 session.mount("https://", HTTPAdapter(max_retries=retry))
 
 
+# ===== STATE =====
 def load_state():
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
@@ -45,7 +46,7 @@ def save_state(post_id):
         json.dump({"last_post_id": post_id}, f)
 
 
-# ===== 1. Fetch THREAD-uri =====
+# ===== 1. FETCH THREAD-URI DIN BOARD =====
 def fetch_threads():
     try:
         r = session.get(BOARD_URL, headers=HEADERS, timeout=20)
@@ -58,10 +59,19 @@ def fetch_threads():
         return []
 
     soup = BeautifulSoup(r.text, "html.parser")
-
     threads = []
-    for a in soup.select("a.subject"):
-        href = a.get("href")
+
+    # ✅ SELECTOR CORECT GAMEFORGE / WOLTLAB
+    for item in soup.select(".structItem--thread"):
+        # ignoră sticky / announcements
+        if "isSticky" in item.get("class", []):
+            continue
+
+        link = item.select_one("a.wbbTopicLink")
+        if not link:
+            continue
+
+        href = link.get("href")
         if not href:
             continue
 
@@ -74,7 +84,7 @@ def fetch_threads():
     return threads
 
 
-# ===== 2. Fetch ultimul POST din thread =====
+# ===== 2. FETCH ULTIMUL POST DIN THREAD =====
 def fetch_last_post(thread_url):
     try:
         r = session.get(thread_url, headers=HEADERS, timeout=20)
@@ -83,7 +93,7 @@ def fetch_last_post(thread_url):
         return None
 
     if len(r.text) < 5000:
-        print("⚠️ HTML thread invalid:", thread_url)
+        print("⚠️ HTML thread prea mic:", thread_url)
         return None
 
     soup = BeautifulSoup(r.text, "html.parser")
@@ -108,9 +118,9 @@ def fetch_last_post(thread_url):
     }
 
 
-# ===== 3. Discord =====
+# ===== 3. DISCORD =====
 def send_to_discord(post):
-    data = {
+    payload = {
         "username": "Metin2 Board Bot",
         "embeds": [
             {
@@ -125,7 +135,7 @@ def send_to_discord(post):
     }
 
     try:
-        r = session.post(DISCORD_WEBHOOK, json=data, timeout=15)
+        r = session.post(DISCORD_WEBHOOK, json=payload, timeout=15)
         print("✅ Trimite Discord:", r.status_code)
     except Exception as e:
         print("❌ Eroare Discord:", e)
@@ -134,14 +144,14 @@ def send_to_discord(post):
 # ===== MAIN LOOP =====
 def main():
     if not BOARD_URL or not DISCORD_WEBHOOK:
-        print("❌ Variabilele de mediu lipsesc!")
+        print("❌ Lipsesc variabilele de mediu!")
         return
 
     print("🤖 Bot pornit...")
     state = load_state()
     last_post_id = state.get("last_post_id")
 
-    # inițializare – NU trimite nimic la prima rulare
+    # Inițializare – NU trimite nimic la prima rulare
     if not last_post_id:
         print("📌 Inițializare stare...")
         threads = fetch_threads()
@@ -151,7 +161,7 @@ def main():
                 last_post_id = post["id"]
         if last_post_id:
             save_state(last_post_id)
-        print("✅ Stare inițială salvată.")
+            print("✅ Stare inițială salvată:", last_post_id)
         time.sleep(CHECK_INTERVAL)
 
     while True:
