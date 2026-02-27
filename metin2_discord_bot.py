@@ -22,7 +22,7 @@ HEADERS = {
 }
 # =========================================
 
-# ===== HTTP SESSION cu retry =====
+# ===== SESSION HTTP CU RETRY =====
 session = requests.Session()
 retry = Retry(
     total=3,
@@ -46,13 +46,15 @@ def save_state(post_id):
         json.dump({"last_post_id": post_id}, f)
 
 
-# ===== 1. FETCH THREAD-URI DIN BOARD =====
+# ===== FETCH THREAD-URI DIN BOARD =====
 def fetch_threads():
     try:
         r = session.get(BOARD_URL, headers=HEADERS, timeout=20)
     except Exception as e:
         print("❌ Eroare request board:", e)
         return []
+
+    print("📄 HTML board length:", len(r.text))
 
     if len(r.text) < 5000:
         print("⚠️ HTML board prea mic (probabil blocat)")
@@ -61,13 +63,11 @@ def fetch_threads():
     soup = BeautifulSoup(r.text, "html.parser")
     threads = []
 
-    # ✅ SELECTOR CORECT GAMEFORGE / WOLTLAB
     for item in soup.select(".structItem--thread"):
-        # ignoră sticky / announcements
         if "isSticky" in item.get("class", []):
             continue
 
-        link = item.select_one("a.wbbTopicLink")
+        link = item.select_one(".structItem-title a")
         if not link:
             continue
 
@@ -84,7 +84,7 @@ def fetch_threads():
     return threads
 
 
-# ===== 2. FETCH ULTIMUL POST DIN THREAD =====
+# ===== FETCH ULTIMUL POST DIN THREAD =====
 def fetch_last_post(thread_url):
     try:
         r = session.get(thread_url, headers=HEADERS, timeout=20)
@@ -118,7 +118,7 @@ def fetch_last_post(thread_url):
     }
 
 
-# ===== 3. DISCORD =====
+# ===== TRIMITERE DISCORD =====
 def send_to_discord(post):
     payload = {
         "username": "Metin2 Board Bot",
@@ -151,7 +151,7 @@ def main():
     state = load_state()
     last_post_id = state.get("last_post_id")
 
-    # Inițializare – NU trimite nimic la prima rulare
+    # Inițializare – NU trimite nimic
     if not last_post_id:
         print("📌 Inițializare stare...")
         threads = fetch_threads()
