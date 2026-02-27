@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+import re
 
 # ================= CONFIG =================
 BOARD_URL = os.getenv("THREAD_URL")
@@ -38,7 +39,7 @@ def save_state(post_id):
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump({"last_post_id": post_id}, f)
 
-# ===== FETCH THREAD-URI DIN BOARD =====
+# ===== FETCH THREAD-URI DIN BOARD – metoda robusta =====
 def fetch_threads():
     try:
         r = session.get(BOARD_URL, headers=HEADERS, timeout=20)
@@ -54,19 +55,14 @@ def fetch_threads():
     soup = BeautifulSoup(r.text, "html.parser")
     threads = []
 
-    for item in soup.select(".structItem--thread"):
-        # ignoră sticky threads
-        if "isSticky" in item.get("class", []):
-            continue
-        # selector actual pentru Item Shop RO
-        link = item.select_one("h3.structItem-title a")
-        if not link:
-            continue
-        href = link.get("href")
-        if href.startswith("http"):
-            threads.append(href)
-        else:
-            threads.append("https://board.ro.metin2.gameforge.com/" + href)
+    # preia toate link-urile care contin /thread/
+    for link in soup.find_all("a", href=True):
+        href = link["href"]
+        if "/thread/" in href:
+            if not href.startswith("http"):
+                href = "https://board.ro.metin2.gameforge.com/" + href
+            if href not in threads:
+                threads.append(href)
 
     print(f"🔎 Thread-uri găsite: {len(threads)}")
     return threads
