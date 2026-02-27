@@ -1,19 +1,25 @@
 import os
-import time
-import json
-from datetime import datetime
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
 import requests
+import json
+import time
+from bs4 import BeautifulSoup
+from datetime import datetime
 
 # ================= CONFIG =================
-BOARD_URL = os.getenv("THREAD_URL")
+BOARD_URL = os.getenv("THREAD_URL")  # ex: Item Shop board
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "60"))
 STATE_FILE = "last_post.json"
 
-# ================= HELPER =================
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0 Safari/537.36"
+    )
+}
+
+# ===== STATE =====
 def load_state():
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
@@ -25,50 +31,55 @@ def save_state(post_id):
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump({"last_post_id": post_id}, f)
 
-# ================= SELENIUM =================
-def init_driver():
-    options = Options()
-    options.headless = True
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    driver = webdriver.Chrome(options=options)
-    return driver
-
-def fetch_threads(driver):
+# ===== FETCH THREAD-URI DIN BOARD =====
+def fetch_threads():
     try:
-        driver.get(BOARD_URL)
-        time.sleep(5)  # așteaptă încărcarea JS
-        threads = set()
-        # toate <a> care conțin /thread/
-        links = driver.find_elements(By.XPATH, '//a[contains(@href, "/thread/")]')
-        for link in links:
-            href = link.get_attribute("href")
-            if href:
-                threads.add(href)
-        threads = list(threads)
-        print(f"🔎 Thread-uri găsite: {len(threads)}")
-        return threads
+        r = requests.get(BOARD_URL, headers=HEADERS, timeout=20)
+        r.raise_for_status()
     except Exception as e:
-        print("❌ Eroare Selenium fetch:", e)
+        print("❌ Eroare request board:", e)
         return []
 
-def fetch_last_post(driver, thread_url):
+    print("📄 HTML board length:", len(r.text))
+    soup = BeautifulSoup(r.text, "html.parser")
+    threads = []
+
+    # preia toate link-urile care contin /thread/
+    for link in soup.find_all("a", href=True):
+        href = link["href"]
+        if "/thread/" in href:
+            if not href.startswith("http"):
+                href = "https://board.ro.metin2.gameforge.com/" + href
+            if href not in threads:
+                threads.append(href)
+
+    print(f"🔎 Thread-uri găsite: {len(threads)}")
+    return threads
+
+# ===== FETCH ULTIMUL POST DIN THREAD =====
+def fetch_last_post(thread_url):
     try:
-        driver.get(thread_url)
-        time.sleep(3)
-        articles = driver.find_elements(By.TAG_NAME, "article")
-        if not articles:
-            return None
-        last_article = articles[-1]
-        post_id = last_article.get_attribute("id")
-        content_div = last_article.find_element(By.CLASS_NAME, "messageText")
-        content = content_div.text.strip()
-        return {"id": post_id, "content": content, "url": thread_url + "#" + post_id}
+        r = requests.get(thread_url, headers=HEADERS, timeout=15)
+        r.raise_for_status()
     except Exception as e:
-        print("❌ Eroare Selenium thread:", e)
+        print("❌ Eroare request thread:", e)
         return None
 
-# ================= DISCORD =================
+    soup = BeautifulSoup(r.text, "html.parser")
+    articles = soup.select("article")
+    if not articles:
+        return None
+
+    last_article = articles[-1]
+    post_id = last_article.get("id")
+    content_div = last_article.select_one(".messageText")
+    if not post_id or not content_div:
+        return None
+
+    content = content_div.get_text(separator="\n").strip()
+    return {"id": post_id, "content": content, "url": thread_url + "#" + post_id}
+
+# ===== TRIMITERE DISCORD =====
 def send_to_discord(post):
     payload = {
         "username": "Metin2 Board Bot",
@@ -87,7 +98,7 @@ def send_to_discord(post):
     except Exception as e:
         print("❌ Eroare Discord:", e)
 
-# ================= MAIN LOOP =================
+# ===== MAIN LOOP =====
 def main():
     if not BOARD_URL or not DISCORD_WEBHOOK:
         print("❌ Lipsesc variabilele de mediu!")
@@ -97,14 +108,12 @@ def main():
     state = load_state()
     last_post_id = state.get("last_post_id")
 
-    driver = init_driver()
-
-    # Inițializare
+    # Inițializare – nu trimite notificări
     if not last_post_id:
         print("📌 Inițializare stare...")
-        threads = fetch_threads(driver)
+        threads = fetch_threads()
         for thread in threads:
-            post = fetch_last_post(driver, thread)
+            post = fetch_last_post(thread)
             if post:
                 last_post_id = post["id"]
         if last_post_id:
@@ -114,12 +123,13 @@ def main():
 
     while True:
         try:
-            threads = fetch_threads(driver)
+            threads = fetch_threads()
             new_posts = []
             for thread in threads:
-                post = fetch_last_post(driver, thread)
+                post = fetch_last_post(thread)
                 if post and post["id"] != last_post_id:
                     new_posts.append(post)
+
             if new_posts:
                 print(f"🔥 Postări noi: {len(new_posts)}")
                 for post in reversed(new_posts):
@@ -128,15 +138,15 @@ def main():
                     last_post_id = post["id"]
             else:
                 print("ℹ️ Nicio postare nouă.")
+
             time.sleep(CHECK_INTERVAL)
+
         except KeyboardInterrupt:
             print("⏹️ Oprire manuală.")
             break
         except Exception as e:
             print("❌ Eroare generală:", e)
             time.sleep(30)
-
-    driver.quit()
 
 if __name__ == "__main__":
     main()
