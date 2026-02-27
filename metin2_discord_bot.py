@@ -55,15 +55,14 @@ def fetch_threads():
     threads = []
 
     for item in soup.select(".structItem--thread"):
+        # ignoră sticky threads
         if "isSticky" in item.get("class", []):
             continue
-        # selector corect Item Shop RO
-        link = item.select_one("div.structItem-title a")
+        # preia link-ul real: orice <a> din thread care conține /thread/
+        link = item.find("a", href=lambda href: href and "/thread/" in href)
         if not link:
             continue
         href = link.get("href")
-        if not href:
-            continue
         if href.startswith("http"):
             threads.append(href)
         else:
